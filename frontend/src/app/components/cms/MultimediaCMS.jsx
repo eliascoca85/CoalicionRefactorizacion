@@ -1,0 +1,1022 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { Button } from './Button';
+import { Modal } from './Modal';
+import { Input } from './Input';
+import { Table } from './Table';
+import { Pagination } from './Pagination';
+import { FileUpload } from './FileUpload';
+import { FilePicker } from './FilePicker';
+import { multimediaService, categoriasService, uploadsService } from '@/api';
+import { usePermissions } from '@/hooks/useAuth';
+
+export const MultimediaCMS = () => {
+  // Permisos del usuario
+  const permissions = usePermissions();
+  
+  // Estados principales
+  const [multimedia, setMultimedia] = useState([]);
+  const [categorias, setCategorias] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // Estados del modal
+  const [showModal, setShowModal] = useState(false);
+  const [modalMode, setModalMode] = useState('create');
+  const [selectedItem, setSelectedItem] = useState(null);
+
+  // Estados del formulario
+  const [formData, setFormData] = useState({
+    title: '',
+    description: '',
+    type: '',
+    thumbnail: '',
+    downloadurl: '',
+    previewurl: '',
+    duration: '',
+    format: '',
+    size: '',
+    tags: '',
+    featured: false,
+    slug: '',
+    mediafile: '',
+    categoria_id: ''
+  });
+
+  // Estados para subida de archivos
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [selectedMainFile, setSelectedMainFile] = useState(null);
+
+  // Estados de paginación
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const [itemsPerPage] = useState(10);
+
+  // Función para obtener URL completa
+  const getFullUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http')) return url;
+    // Convertir URL relativa a URL completa del backend
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    return `${baseUrl.replace('/api', '')}${url}`;
+  };
+
+  // Función para forzar descarga de archivos
+  const handleForceDownload = (url) => {
+    if (!url) {
+      alert('URL de descarga no válida o no disponible');
+      return;
+    }
+
+    try {
+      // Construir URL de descarga forzada
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+      
+      // Extraer la ruta relativa del archivo
+      let filePath = url;
+      if (url.startsWith('/uploads/')) {
+        filePath = url.replace('/uploads/', '');
+      } else if (url.includes('/uploads/')) {
+        filePath = url.split('/uploads/')[1];
+      }
+      
+      // Parsear el path para obtener tipo, formato y nombre
+      const pathParts = filePath.split('/');
+      if (pathParts.length >= 3) {
+        const type = pathParts[0];
+        const format = pathParts[1];
+        const filename = pathParts[2];
+        
+        const downloadUrl = `${baseUrl.replace('/api', '')}/api/uploads/download/${type}/${format}/${filename}`;
+        
+        // Crear enlace de descarga
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        link.style.display = 'none';
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        alert('URL de archivo no válida');
+      }
+      
+    } catch (error) {
+      console.error('Error al descargar archivo:', error);
+      alert('Error al descargar el archivo');
+    }
+  };
+
+  // Configuración de columnas
+  const columns = [
+    {
+      key: 'id',
+      header: 'ID',
+      render: (value) => <span className="font-mono text-sm text-gray-300">{value}</span>
+    },
+    {
+      key: 'title',
+      header: 'Título',
+      render: (value) => (
+        <div className="max-w-xs truncate font-medium text-gray-300">
+          {value}
+        </div>
+      )
+    },
+    {
+      key: 'type',
+      header: 'Tipo',
+      render: (value) => {
+        const typeColors = {
+          infografia: 'bg-blue-500/20 text-blue-300',
+          video: 'bg-red-500/20 text-red-300',
+          arte: 'bg-purple-500/20 text-purple-300',
+          presentacion: 'bg-green-500/20 text-green-300',
+          image: 'bg-purple-500/20 text-purple-300',
+          audio: 'bg-orange-500/20 text-orange-300'
+        };
+        return (
+          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${typeColors[value] || 'bg-gray-500/20 text-gray-300'}`}>
+            {value === 'infografia' ? 'Infografía' : value === 'presentacion' ? 'Presentación' : value}
+          </span>
+        );
+      }
+    },
+    {
+      key: 'size',
+      header: 'Tamaño',
+      render: (value) => (
+        <span className="text-gray-300">
+          {value || '-'}
+        </span>
+      )
+    },
+    {
+      key: 'format',
+      header: 'Formato',
+      render: (value) => (
+        <span className="text-gray-300">
+          {value || '-'}
+        </span>
+      )
+    },
+    {
+      key: 'downloadurl',
+      header: 'Archivo',
+      render: (value) => value ? (
+        <button
+          onClick={() => handleForceDownload(value)}
+          className="text-blue-400 hover:text-blue-300 underline cursor-pointer bg-none border-none p-0"
+        >
+          Descargar
+        </button>
+      ) : '-'
+    }
+  ];
+
+  // Opciones para selects
+  const typeOptions = [
+    { value: 'infografia', label: 'Infografía' },
+    { value: 'video', label: 'Video' },
+    { value: 'arte', label: 'Arte' },
+    { value: 'presentacion', label: 'Presentación' }
+  ];
+
+  // Obtener tipos de archivos aceptados según el tipo
+  const getAcceptedFiles = (type) => {
+    const acceptedTypes = {
+      'infografia': 'image/jpeg,image/jpg,image/png,image/svg+xml,application/pdf',
+      'video': 'video/mp4,video/avi,video/quicktime,video/x-msvideo',
+      'arte': 'image/jpeg,image/jpg,image/png,image/svg+xml,image/gif',
+      'presentacion': 'application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    };
+    return acceptedTypes[type] || '*/*';
+  };
+
+  // Cargar datos
+  useEffect(() => {
+    loadMultimedia();
+    loadCategorias();
+  }, [currentPage]);
+
+  const loadMultimedia = async () => {
+    try {
+      setLoading(true);
+      const response = await multimediaService.getAll({
+        page: currentPage,
+        limit: itemsPerPage
+      });
+      
+      if (response.success) {
+        setMultimedia(response.data);
+        setTotalPages(response.pagination?.totalPages || 1);
+        setTotalItems(response.pagination?.total || 0);
+      }
+    } catch (err) {
+      setError('Error al cargar multimedia: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadCategorias = async () => {
+    try {
+      const response = await categoriasService.getAll();
+      if (response.success) {
+        setCategorias(response.data);
+      }
+    } catch (err) {
+      console.error('Error al cargar categorías:', err);
+    }
+  };
+
+  // Manejar formulario
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  // Manejar selección de archivo principal
+  const handleMainFileSelect = (file) => {
+    setSelectedMainFile(file);
+    
+    // Auto-completar campos basados en el archivo
+    const extension = uploadsService.getFileExtension(file.name);
+    const slug = uploadsService.generateSlug(file.name);
+    const size = uploadsService.formatFileSize(file.size);
+    
+    // Determinar si el archivo es una imagen
+    const isImage = file.type.startsWith('image/') || 
+                   ['infografia', 'arte'].includes(formData.type);
+    
+    setFormData(prev => ({
+      ...prev,
+      format: extension.toUpperCase(),
+      size: size,
+      slug: slug,
+      mediafile: file.name,
+      // Si es imagen, preparar para usar como vista previa y miniatura
+      ...(isImage && {
+        thumbnail: '[Se asignará automáticamente al subir]',
+        previewurl: '[Se asignará automáticamente al subir]'
+      })
+    }));
+  };
+
+  // Subir archivo principal
+  const handleMainFileUpload = async (file) => {
+    if (!formData.type) {
+      setError('Selecciona primero el tipo de multimedia');
+      return;
+    }
+
+    try {
+      setUploadingFile(true);
+      const response = await uploadsService.uploadFile(file, formData.type);
+      
+      if (response.success) {
+        // Determinar si el archivo es una imagen para auto-asignar como vista previa y miniatura
+        const isImage = file.type.startsWith('image/') || 
+                       ['infografia', 'arte'].includes(formData.type) ||
+                       ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(response.data.format?.toLowerCase());
+
+        setFormData(prev => ({
+          ...prev,
+          downloadurl: response.data.url,
+          mediafile: response.data.filename,
+          format: response.data.format,
+          size: response.data.size,
+          duration: response.data.duration || prev.duration,
+          // Auto-asignar como vista previa y miniatura si es imagen
+          thumbnail: isImage ? response.data.url : prev.thumbnail,
+          previewurl: isImage ? response.data.url : prev.previewurl
+        }));
+        return response;
+      } else {
+        throw new Error(response.message);
+      }
+    } catch (error) {
+      throw new Error(`Error subiendo archivo: ${error.message}`);
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  // Manejar selección de miniatura desde picker
+  const handleThumbnailSelect = (fileUrl, fileName) => {
+    setFormData(prev => ({ ...prev, thumbnail: fileUrl }));
+  };
+
+  // Manejar selección de vista previa desde picker
+  const handlePreviewSelect = (fileUrl, fileName) => {
+    setFormData(prev => ({ ...prev, previewurl: fileUrl }));
+  };
+
+  // Subir miniatura
+  const handleThumbnailUpload = async (file) => {
+    try {
+      const response = await uploadsService.uploadThumbnail(file, 'thumbnail');
+      
+      if (response.success) {
+        setFormData(prev => ({ ...prev, thumbnail: response.data.url }));
+        return response;
+      } else {
+        throw new Error(response.message);
+      }
+    } catch (error) {
+      throw new Error(`Error subiendo miniatura: ${error.message}`);
+    }
+  };
+
+  // Subir vista previa
+  const handlePreviewUpload = async (file) => {
+    try {
+      const response = await uploadsService.uploadThumbnail(file, 'preview');
+      
+      if (response.success) {
+        setFormData(prev => ({ ...prev, previewurl: response.data.url }));
+        return response;
+      } else {
+        throw new Error(response.message);
+      }
+    } catch (error) {
+      throw new Error(`Error subiendo vista previa: ${error.message}`);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    // Verificar permisos
+    if (modalMode === 'create' && !permissions.canCreateContent) {
+      setError('No tienes permisos para crear multimedia');
+      return;
+    }
+    
+    if (modalMode === 'edit' && !permissions.canEditContent) {
+      setError('No tienes permisos para editar multimedia');
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      
+      const dataToSend = {
+        ...formData,
+        categoria_id: formData.categoria_id ? parseInt(formData.categoria_id) : null,
+        tags: formData.tags ? formData.tags.split(',').map(tag => tag.trim()) : null
+      };
+
+      let response;
+      if (modalMode === 'create') {
+        response = await multimediaService.create(dataToSend);
+      } else {
+        response = await multimediaService.update(selectedItem.id, dataToSend);
+      }
+
+      if (response.success) {
+        setShowModal(false);
+        resetForm();
+        loadMultimedia();
+      }
+    } catch (err) {
+      setError('Error al guardar: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (item) => {
+    // Verificar permisos
+    if (!permissions.canDeleteContent) {
+      setError('No tienes permisos para eliminar multimedia');
+      return;
+    }
+    
+    if (window.confirm('¿Estás seguro de que quieres eliminar este archivo multimedia?')) {
+      try {
+        setLoading(true);
+        const response = await multimediaService.delete(item.id);
+        if (response.success) {
+          loadMultimedia();
+        }
+      } catch (err) {
+        setError('Error al eliminar: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  // Funciones de modal
+  const openCreateModal = () => {
+    if (!permissions.canCreateContent) {
+      setError('No tienes permisos para crear multimedia');
+      return;
+    }
+    setModalMode('create');
+    resetForm();
+    setShowModal(true);
+  };
+
+  const openEditModal = (item) => {
+    if (!permissions.canEditContent) {
+      setError('No tienes permisos para editar multimedia');
+      return;
+    }
+    setModalMode('edit');
+    setSelectedItem(item);
+    setFormData({
+      title: item.title || '',
+      description: item.description || '',
+      type: item.type || '',
+      thumbnail: item.thumbnail || '',
+      downloadurl: item.downloadurl || '',
+      previewurl: item.previewurl || '',
+      duration: item.duration || '',
+      format: item.format || '',
+      size: item.size || '',
+      tags: Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || ''),
+      featured: item.featured || false,
+      slug: item.slug || '',
+      mediafile: item.mediafile || '',
+      categoria_id: item.categoria_id || ''
+    });
+    setShowModal(true);
+  };
+
+  const openViewModal = (item) => {
+    setModalMode('view');
+    setSelectedItem(item);
+    setShowModal(true);
+  };
+
+  const resetForm = () => {
+    setFormData({
+      title: '',
+      description: '',
+      type: '',
+      thumbnail: '',
+      downloadurl: '',
+      previewurl: '',
+      duration: '',
+      format: '',
+      size: '',
+      tags: '',
+      featured: false,
+      slug: '',
+      mediafile: '',
+      categoria_id: ''
+    });
+    setSelectedItem(null);
+    setSelectedMainFile(null);
+    setUploadingFile(false);
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    resetForm();
+    setError('');
+  };
+
+  return (
+    <div className="space-y-6 bg-gray-800 h-screen p-6">
+      <div className="bg-gray-800 rounded-lg shadow-2xl border border-gray-700">
+        {/* Header */}
+        <div className="px-8 py-6 border-b border-gray-700 bg-gradient-to-r from-gray-800 to-gray-700 rounded-t-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-white">Gestión de Multimedia</h1>
+              <p className="mt-1 text-sm text-gray-300">
+                Administra archivos multimedia del sistema
+                {permissions.isReader && " • Solo lectura"}
+                {permissions.isEditor && " • Editor: crear, editar, eliminar"}
+                {permissions.isAdmin && " • Administrador: acceso completo"}
+              </p>
+            </div>
+            {permissions.canCreateContent && (
+              <Button onClick={openCreateModal}>
+                <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Nuevo Multimedia
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="p-8">
+
+          {/* Error */}
+          {error && (
+            <div className="bg-red-800 border border-red-600 text-red-200 px-4 py-3 rounded mb-6">
+              {error}
+              <button 
+                onClick={() => setError('')}
+                className="float-right text-red-300 hover:text-red-100"
+              >
+                ×
+              </button>
+            </div>
+          )}
+
+          {/* Estadísticas */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div className="bg-gray-700 rounded-lg p-6 border border-gray-600">
+              <div className="flex items-center">
+                <div className="p-3 rounded-full bg-blue-500/20">
+                  <svg className="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4V2a1 1 0 011-1h4a1 1 0 011 1v2h4a1 1 0 110 2h-1v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6H3a1 1 0 110-2h4z" />
+                  </svg>
+                </div>
+                <div className="ml-5">
+                  <p className="text-sm font-medium text-gray-300">Total Archivos</p>
+                  <p className="text-2xl font-bold text-white">{totalItems}</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-gray-700 rounded-lg p-6 border border-gray-600">
+              <div className="flex items-center">
+                <div className="p-3 rounded-full bg-green-500/20">
+                  <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div className="ml-5">
+                  <p className="text-sm font-medium text-gray-300">Videos</p>
+                  <p className="text-2xl font-bold text-white">{multimedia.filter(m => m.type === 'video').length}</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-gray-700 rounded-lg p-6 border border-gray-600">
+              <div className="flex items-center">
+                <div className="p-3 rounded-full bg-purple-500/20">
+                  <svg className="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div className="ml-5">
+                  <p className="text-sm font-medium text-gray-300">Imágenes</p>
+                  <p className="text-2xl font-bold text-white">{multimedia.filter(m => m.type === 'image').length}</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-gray-700 rounded-lg p-6 border border-gray-600">
+              <div className="flex items-center">
+                <div className="p-3 rounded-full bg-orange-500/20">
+                  <svg className="w-6 h-6 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                  </svg>
+                </div>
+                <div className="ml-5">
+                  <p className="text-sm font-medium text-gray-300">Audio</p>
+                  <p className="text-2xl font-bold text-white">{multimedia.filter(m => m.type === 'audio').length}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Tabla */}
+      <Table
+        data={multimedia}
+        columns={columns}
+        loading={loading}
+        onEdit={permissions.canEditContent ? openEditModal : undefined}
+        onDelete={permissions.canDeleteContent ? handleDelete : undefined}
+        onView={openViewModal}
+        emptyMessage="No hay archivos multimedia disponibles"
+      />
+
+          {/* Paginación */}
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            itemsPerPage={itemsPerPage}
+            onPageChange={setCurrentPage}
+          />
+        </div>
+      </div>
+
+      {/* Modal */}
+      <Modal
+        isOpen={showModal}
+        onClose={closeModal}
+        title={
+          modalMode === 'create' ? '📁 Nuevo Multimedia' :
+          modalMode === 'edit' ? '✏️ Editar Multimedia' :
+          '👁️ Ver Multimedia'
+        }
+        size={modalMode === 'view' ? "xl" : "lg"}
+        onConfirm={modalMode !== 'view' ? handleSubmit : undefined}
+        onCancel={closeModal}
+        confirmText={modalMode === 'create' ? 'Crear' : 'Actualizar'}
+        isLoading={loading}
+      >
+        {modalMode === 'view' ? (
+          // Vista de solo lectura
+          <div className="space-y-6">
+            {/* Vista previa del archivo */}
+            {selectedItem?.downloadurl && (
+              <div className="bg-gray-700 p-4 rounded-lg">
+                <label className="block text-sm font-medium text-gray-300 mb-3">Vista Previa del Archivo</label>
+                <div className="bg-gray-800 p-4 rounded-lg">
+                  {selectedItem.type === 'infografia' || selectedItem.type === 'arte' ? (
+                    // Vista previa para imágenes
+                    <div className="flex justify-center">
+                      <img
+                        src={getFullUrl(selectedItem.downloadurl)}
+                        alt={selectedItem.title}
+                        className="max-w-full max-h-96 object-contain rounded-lg shadow-lg"
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'block';
+                        }}
+                      />
+                      <div className="hidden text-center text-gray-400 py-8">
+                        <svg className="w-16 h-16 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <p>No se pudo cargar la imagen</p>
+                      </div>
+                    </div>
+                  ) : selectedItem.type === 'video' ? (
+                    // Vista previa para videos
+                    <div className="flex justify-center">
+                      <video
+                        controls
+                        className="max-w-full max-h-96 rounded-lg shadow-lg"
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'block';
+                        }}
+                      >
+                        <source src={getFullUrl(selectedItem.downloadurl)} />
+                        Tu navegador no soporta el elemento de video.
+                      </video>
+                      <div className="hidden text-center text-gray-400 py-8">
+                        <svg className="w-16 h-16 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                        <p>No se pudo cargar el video</p>
+                      </div>
+                    </div>
+                  ) : selectedItem.type === 'presentacion' && selectedItem.format?.toLowerCase() === 'pdf' ? (
+                    // Vista previa para PDFs
+                    <div className="space-y-4">
+                      <iframe
+                        src={`${getFullUrl(selectedItem.downloadurl)}#view=FitH`}
+                        className="w-full h-96 rounded-lg border border-gray-600"
+                        title={selectedItem.title}
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'block';
+                        }}
+                      />
+                      <div className="hidden text-center text-gray-400 py-8">
+                        <svg className="w-16 h-16 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <p>No se pudo cargar el PDF</p>
+                      </div>
+                    </div>
+                  ) : (
+                    // Vista previa genérica para otros tipos de archivo
+                    <div className="text-center text-gray-400 py-8">
+                      <svg className="w-16 h-16 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <p className="mb-2">Vista previa no disponible para este tipo de archivo</p>
+                      <p className="text-sm">Archivo: {selectedItem.mediafile}</p>
+                      <p className="text-sm">Formato: {selectedItem.format}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            
+
+            <div className="grid grid-cols-2 gap-6">
+              <div className="bg-gray-700 p-4 rounded-lg">
+                <label className="block text-sm font-medium text-gray-300 mb-2">Título</label>
+                <p className="text-white font-medium">{selectedItem?.title}</p>
+              </div>
+              <div className="bg-gray-700 p-4 rounded-lg">
+                <label className="block text-sm font-medium text-gray-300 mb-2">Tipo</label>
+                <p className="text-white">{selectedItem?.type}</p>
+              </div>
+              <div className="bg-gray-700 p-4 rounded-lg">
+                <label className="block text-sm font-medium text-gray-300 mb-2">Tamaño</label>
+                <p className="text-white">{selectedItem?.size || '-'}</p>
+              </div>
+              <div className="bg-gray-700 p-4 rounded-lg">
+                <label className="block text-sm font-medium text-gray-300 mb-2">Formato</label>
+                <p className="text-white">{selectedItem?.format || '-'}</p>
+              </div>
+            </div>
+            <div className="bg-gray-700 p-4 rounded-lg">
+              <label className="block text-sm font-medium text-gray-300 mb-2">Descripción</label>
+              <p className="text-white leading-relaxed">{selectedItem?.description || '-'}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="bg-gray-700 p-4 rounded-lg">
+                <label className="block text-sm font-medium text-gray-300 mb-2">URL de Descarga</label>
+                <div className="text-white">
+                  {selectedItem?.downloadurl ? (
+                    <div className="space-y-2">
+                      <button
+                        onClick={() => handleForceDownload(selectedItem.downloadurl)}
+                        className="text-blue-400 hover:text-blue-300 underline cursor-pointer bg-none border-none p-0 block"
+                      >
+                        Descargar archivo
+                      </button>
+                      <p className="text-xs text-gray-400 break-all">{selectedItem.downloadurl}</p>
+                    </div>
+                  ) : '-'}
+                </div>
+              </div>
+              <div className="bg-gray-700 p-4 rounded-lg">
+                <label className="block text-sm font-medium text-gray-300 mb-2">URL de Vista Previa</label>
+                <div className="text-white">
+                  {selectedItem?.previewurl ? (
+                    <a 
+                      href={getFullUrl(selectedItem.previewurl)} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="text-blue-400 hover:text-blue-300 underline break-all"
+                    >
+                      {selectedItem.previewurl}
+                    </a>
+                  ) : '-'}
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="bg-gray-700 p-4 rounded-lg">
+                <label className="block text-sm font-medium text-gray-300 mb-2">Duración</label>
+                <p className="text-white">{selectedItem?.duration || '-'}</p>
+              </div>
+              <div className="bg-gray-700 p-4 rounded-lg">
+                <label className="block text-sm font-medium text-gray-300 mb-2">Archivo de Medios</label>
+                <p className="text-white">{selectedItem?.mediafile || '-'}</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          // Formulario
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Información básica */}
+            <div className="grid grid-cols-2 gap-4">
+              <Input
+                label="Título"
+                name="title"
+                value={formData.title}
+                onChange={handleInputChange}
+                required
+                placeholder="Título del archivo"
+              />
+              <Input
+                label="Tipo"
+                name="type"
+                type="select"
+                value={formData.type}
+                onChange={handleInputChange}
+                required
+                placeholder="Selecciona un tipo"
+                options={typeOptions}
+              />
+            </div>
+
+            {/* Subida de archivo principal */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-medium text-gray-300 border-b border-gray-700 pb-2">
+                Archivo Principal
+              </h3>
+              
+              <FileUpload
+                label="Subir Archivo"
+                accept={getAcceptedFiles(formData.type)}
+                maxSize={100}
+                onFileSelect={handleMainFileSelect}
+                onUpload={handleMainFileUpload}
+                disabled={!formData.type}
+                helperText={!formData.type ? "Primero selecciona el tipo de multimedia" : "Arrastra o selecciona el archivo principal"}
+              />
+
+              {/* URL manual como alternativa */}
+              <Input
+                label="URL de Descarga (alternativa)"
+                name="downloadurl"
+                value={formData.downloadurl}
+                onChange={handleInputChange}
+                placeholder="https://... (opcional si subes archivo)"
+                helperText="Puedes subir un archivo o ingresar una URL manualmente"
+              />
+            </div>
+
+            {/* Metadatos auto-completados */}
+            <div className="grid grid-cols-3 gap-4">
+              <Input
+                label="Tamaño del Archivo"
+                name="size"
+                value={formData.size}
+                onChange={handleInputChange}
+                placeholder="Se detecta automáticamente"
+                helperText="Se completa automáticamente al subir archivo"
+              />
+              <Input
+                label="Formato"
+                name="format"
+                value={formData.format}
+                onChange={handleInputChange}
+                placeholder="Se detecta automáticamente"
+                helperText="Se completa automáticamente al subir archivo"
+              />
+              <Input
+                label="Duración"
+                name="duration"
+                value={formData.duration}
+                onChange={handleInputChange}
+                placeholder="00:05:30 (para videos/audio)"
+                helperText="Formato: HH:MM:SS"
+              />
+            </div>
+
+            {/* Slug auto-generado */}
+            <Input
+              label="Slug"
+              name="slug"
+              value={formData.slug}
+              onChange={handleInputChange}
+              placeholder="Se genera automáticamente"
+              helperText="URL amigable - se genera automáticamente del nombre del archivo"
+            />
+
+            {/* Miniatura y vista previa */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-medium text-gray-300 border-b border-gray-700 pb-2">
+                Imágenes {(formData.type === 'infografia' || formData.type === 'arte') && 
+                         <span className="text-sm font-normal text-blue-400">(Se auto-asignan del archivo principal)</span>}
+              </h3>
+              
+              {/* Mostrar información si es imagen */}
+              {(formData.type === 'infografia' || formData.type === 'arte') && (
+                <div className="bg-blue-900/20 border border-blue-600/30 rounded-lg p-4">
+                  <div className="flex items-start space-x-3">
+                    <svg className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                      <p className="text-sm text-blue-300 font-medium">Auto-asignación de imágenes</p>
+                      <p className="text-xs text-blue-200 mt-1">
+                        Para archivos de imagen (infografías/arte), la miniatura y vista previa se asignan automáticamente 
+                        del archivo principal. Solo necesitas subirlas manualmente si quieres usar imágenes diferentes.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-4">
+                  <FileUpload
+                    label={`Subir Miniatura ${(formData.type === 'infografia' || formData.type === 'arte') ? '(Opcional)' : ''}`}
+                    accept="image/*"
+                    maxSize={10}
+                    onFileSelect={(file) => console.log('Miniatura seleccionada:', file)}
+                    onUpload={handleThumbnailUpload}
+                    helperText={
+                      (formData.type === 'infografia' || formData.type === 'arte') 
+                        ? "Solo si quieres una miniatura diferente al archivo principal"
+                        : "Imagen pequeña para mostrar en listas"
+                    }
+                  />
+                  
+                  <FilePicker
+                    label="O seleccionar miniatura existente"
+                    type="thumbnails"
+                    value={formData.thumbnail}
+                    onChange={handleThumbnailSelect}
+                    placeholder="Seleccionar desde archivos existentes"
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <FileUpload
+                    label={`Subir Vista Previa ${(formData.type === 'infografia' || formData.type === 'arte') ? '(Opcional)' : ''}`}
+                    accept="image/*"
+                    maxSize={10}
+                    onFileSelect={(file) => console.log('Vista previa seleccionada:', file)}
+                    onUpload={handlePreviewUpload}
+                    helperText={
+                      (formData.type === 'infografia' || formData.type === 'arte')
+                        ? "Solo si quieres una vista previa diferente al archivo principal"
+                        : "Imagen de vista previa más grande"
+                    }
+                  />
+                  
+                  <FilePicker
+                    label="O seleccionar vista previa existente"
+                    type="previews"
+                    value={formData.previewurl}
+                    onChange={handlePreviewSelect}
+                    placeholder="Seleccionar desde archivos existentes"
+                  />
+                </div>
+              </div>
+
+              {/* Mostrar URLs auto-asignadas si aplica */}
+              {(formData.type === 'infografia' || formData.type === 'arte') && formData.downloadurl && (
+                <div className="space-y-3 bg-gray-800/50 p-4 rounded-lg border border-gray-700">
+                  <h4 className="text-sm font-medium text-gray-300">URLs Auto-asignadas del Archivo Principal:</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1">Miniatura</label>
+                      <p className="text-xs text-green-400 bg-gray-800 p-2 rounded border break-all">
+                        {formData.thumbnail === '[Se asignará automáticamente al subir]' ? 
+                          'Se asignará al subir el archivo' : 
+                          formData.thumbnail || formData.downloadurl
+                        }
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1">Vista Previa</label>
+                      <p className="text-xs text-green-400 bg-gray-800 p-2 rounded border break-all">
+                        {formData.previewurl === '[Se asignará automáticamente al subir]' ? 
+                          'Se asignará al subir el archivo' : 
+                          formData.previewurl || formData.downloadurl
+                        }
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Información adicional */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-medium text-gray-300 border-b border-gray-700 pb-2">
+                Información Adicional
+              </h3>
+              
+              <Input
+                label="Descripción"
+                name="description"
+                type="textarea"
+                value={formData.description}
+                onChange={handleInputChange}
+                placeholder="Descripción del archivo multimedia"
+              />
+
+              <div className="grid grid-cols-2 gap-4">
+                <Input
+                  label="Archivo de Medios"
+                  name="mediafile"
+                  value={formData.mediafile}
+                  onChange={handleInputChange}
+                  placeholder="Se completa automáticamente"
+                  helperText="Nombre del archivo de medios"
+                />
+                <Input
+                  label="Categoría"
+                  name="categoria_id"
+                  type="select"
+                  value={formData.categoria_id}
+                  onChange={handleInputChange}
+                  placeholder="Selecciona una categoría"
+                  options={categorias.map(cat => ({ value: cat.id, label: cat.name }))}
+                />
+              </div>
+
+              <Input
+                label="Tags"
+                name="tags"
+                value={formData.tags}
+                onChange={handleInputChange}
+                placeholder="tag1, tag2, tag3"
+                helperText="Separa los tags con comas"
+              />
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  name="featured"
+                  checked={formData.featured}
+                  onChange={handleInputChange}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <label className="ml-2 block text-sm text-gray-300">
+                  Archivo destacado
+                </label>
+              </div>
+            </div>
+          </form>
+        )}
+      </Modal>
+    </div>
+  );
+};

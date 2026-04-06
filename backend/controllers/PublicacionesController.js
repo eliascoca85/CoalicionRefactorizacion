@@ -6,21 +6,28 @@ class PublicacionesController extends BaseController {
         super(new PublicacionesRepository());
     }
 
+    buildCleanFilters(filters) {
+        return Object.keys(filters).reduce((accumulator, key) => {
+            if (filters[key] && filters[key] !== '') {
+                accumulator[key] = filters[key];
+            }
+            return accumulator;
+        }, {});
+    }
+
+    parseQueryNumber(value) {
+        return parseInt(value, 10);
+    }
+
     // Obtener publicaciones con categoría
     async getAllWithCategory(req, res) {
         try {
             const { page = 1, limit = 10, ...filters } = req.query;
-            
-            const cleanFilters = Object.keys(filters).reduce((acc, key) => {
-                if (filters[key] && filters[key] !== '') {
-                    acc[key] = filters[key];
-                }
-                return acc;
-            }, {});
+            const cleanFilters = this.buildCleanFilters(filters);
 
             const result = await this.repository.findAllWithCategory(
-                parseInt(page), 
-                parseInt(limit), 
+                this.parseQueryNumber(page),
+                this.parseQueryNumber(limit),
                 cleanFilters
             );
 
@@ -43,7 +50,7 @@ class PublicacionesController extends BaseController {
     async getFeatured(req, res) {
         try {
             const { limit = 5 } = req.query;
-            const publicaciones = await this.repository.findFeatured(parseInt(limit));
+            const publicaciones = await this.repository.findFeatured(this.parseQueryNumber(limit));
 
             res.status(200).json({
                 success: true,
@@ -72,18 +79,13 @@ class PublicacionesController extends BaseController {
                 });
             }
 
-            const cleanFilters = Object.keys(filters).reduce((acc, key) => {
-                if (filters[key] && filters[key] !== '') {
-                    acc[key] = filters[key];
-                }
-                return acc;
-            }, {});
+            const cleanFilters = this.buildCleanFilters(filters);
 
             const result = await this.repository.searchAdvanced(
                 searchTerm,
                 cleanFilters,
-                parseInt(page),
-                parseInt(limit)
+                this.parseQueryNumber(page),
+                this.parseQueryNumber(limit)
             );
 
             res.status(200).json({

@@ -6,6 +6,8 @@ class PublicacionesController extends BaseController {
         super(new PublicacionesRepository());
     }
 
+    static ALLOWED_PUBLICATION_TYPES = ['informe', 'estudio', 'monitoreo', 'investigacion'];
+
     buildCleanFilters(filters) {
         return Object.keys(filters).reduce((accumulator, key) => {
             if (filters[key] && filters[key] !== '') {
@@ -17,6 +19,22 @@ class PublicacionesController extends BaseController {
 
     parseQueryNumber(value) {
         return parseInt(value, 10);
+    }
+
+    validateCreatePayload(data) {
+        if (!data.title) {
+            return 'El título es requerido';
+        }
+
+        if (!data.type) {
+            return 'El tipo es requerido';
+        }
+
+        if (!PublicacionesController.ALLOWED_PUBLICATION_TYPES.includes(data.type)) {
+            return 'Tipo inválido. Debe ser: informe, estudio, monitoreo, investigacion';
+        }
+
+        return null;
     }
 
     // Obtener publicaciones con categoría
@@ -107,26 +125,12 @@ class PublicacionesController extends BaseController {
     async create(req, res) {
         try {
             const data = req.body;
-            
-            // Validaciones específicas
-            if (!data.title) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'El título es requerido'
-                });
-            }
 
-            if (!data.type) {
+            const validationError = this.validateCreatePayload(data);
+            if (validationError) {
                 return res.status(400).json({
                     success: false,
-                    message: 'El tipo es requerido'
-                });
-            }
-
-            if (!['informe', 'estudio', 'monitoreo', 'investigacion'].includes(data.type)) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Tipo inválido. Debe ser: informe, estudio, monitoreo, investigacion'
+                    message: validationError
                 });
             }
 

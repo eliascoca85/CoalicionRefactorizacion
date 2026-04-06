@@ -1,8 +1,8 @@
 const express = require('express');
-const { Pool } = require('pg'); // Se recomienda usar Pool para manejar conexiones
 const dotenv = require('dotenv');
 const cors = require('cors'); // Para permitir CORS si es necesario
 const path = require('path');
+const { pool } = require('./config/db');
 
 dotenv.config(); // Carga las variables de entorno
 const app = express();
@@ -47,28 +47,6 @@ app.use('/uploads', (req, res, next) => {
     
     next();
 }, express.static(path.join(__dirname, 'uploads')));
-
-// Configuración de la base de datos
-// Configuración de la base de datos
-const pool = new Pool({
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.DB_DATABASE,
-    password: process.env.DB_PASSWORD,
-    port: process.env.DB_PORT,
-    ssl: process.env.NODE_ENV === 'production' ? {
-        rejectUnauthorized: false
-    } : false
-});
-// Verificar conexión a la base de datos
-pool.on('connect', () => {
-    console.log('✅ Cliente de PostgreSQL conectado');
-});
-
-pool.on('error', (err) => {
-    console.error('❌ Error inesperado en cliente PostgreSQL:', err);
-    process.exit(-1);
-});
 
 // Importar rutas de la API
 const apiRoutes = require('./routes');
